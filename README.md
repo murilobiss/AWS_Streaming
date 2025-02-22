@@ -29,6 +29,9 @@ O arquivo `docker-compose.yml` define os seguintes serviços:
 
 ### Fluxo de Trabalho
 
+![Fluxo de Dados](fluxo_dados.jpg)
+
+
 1. **Produção de Dados**: Os produtores enviam dados para o **Kafka Broker**. Esses dados podem ser consumidos por diferentes consumidores, como Spark e Airflow.
 2. **Processamento de Dados**: O **Spark** é utilizado para processar grandes volumes de dados em tempo real (streaming) ou em batch, com os dados sendo ingeridos diretamente do Kafka.
 3. **Armazenamento**: Após o processamento, os dados podem ser armazenados no **Cassandra**.
