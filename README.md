@@ -153,6 +153,14 @@ Você pode monitorar a saúde e o status de todos os serviços usando o painel d
 
 Você pode personalizar o arquivo `docker-compose.yml` para ajustar a quantidade de memória, CPU e outras configurações conforme necessário para o seu ambiente de desenvolvimento ou produção.
 
+### Comandos (Cassandra)
+
+```bash
+docker exec -it cassandra cqlsh -u cassandra -p cassandra localhost 9042
+
+select * from spark_streams.created_users
+```
+
 ### Exemplo de Modificação para Spark
 
 Para ajustar os recursos do Spark Worker:

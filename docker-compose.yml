@@ -106,6 +106,7 @@ services:
 
   webserver:
     image: apache/airflow:2.6.0-python3.9
+    container_name: airflow-webserver
     command: webserver
     entrypoint: ['/opt/airflow/script/entrypoint.sh']
     depends_on:
@@ -135,6 +136,7 @@ services:
 
   scheduler:
     image: apache/airflow:2.6.0-python3.9
+    container_name: airflow-scheduler
     depends_on:
       webserver:
         condition: service_healthy
@@ -153,6 +155,7 @@ services:
 
   postgres:
     image: postgres:14.0
+    container_name: postgres
     environment:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
@@ -165,15 +168,18 @@ services:
       - confluent
 
   spark-master:
-    image: bitnami/spark:latest
+    image: bitnami/spark:latest 
+    container_name: spark-master
     command: bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "9090:8080"
-      - "7077:7077"
+      - "7077:7077"     
     networks:
       - confluent
+
   spark-worker:
     image: bitnami/spark:latest
+    container_name: spark-worker
     command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
