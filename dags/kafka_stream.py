@@ -1,128 +1,143 @@
 import uuid
-import json
-import logging
-import time
 from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-import requests
-from kafka import KafkaProducer
+import logging
 
-# Configuração básica de logging para facilitar o acompanhamento
+# Configuração básica de logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 # Argumentos padrão para o DAG
 default_args = {
-    "owner": "airscholar",  # Proprietário da DAG
-    "start_date": datetime(2023, 9, 3, 10, 0),  # Data de início do DAG
+    "owner": "murilobiss",  # Proprietário da DAG
+    "start_date": datetime(2023, 9, 3, 10, 00),  # Data de início do DAG
 }
 
 
-class UserStreamer:
+def get_data():
     """
-    Classe responsável por buscar dados de usuários e enviá-los para o Kafka.
+    Obtém dados de um usuário aleatório da API randomuser.me.
+
+    Retorna:
+        dict: Dados do usuário em formato JSON ou None em caso de erro.
     """
+    import requests
 
-    def __init__(self, kafka_broker="broker:29092", topic="users_created", duration=60):
-        """
-        Inicializa o produtor Kafka e configura o tempo de duração da execução.
+    try:
+        # Faz a requisição GET para a API
+        res = requests.get("https://randomuser.me/api/")
+        res.raise_for_status()  # Levanta uma exceção se a requisição falhar
+        res = res.json()
+        res = res["results"][0]  # Retorna o primeiro usuário
+        logging.info("Dados obtidos da API com sucesso.")
+        return res
+    except Exception as e:
+        logging.error(f"Erro ao obter dados da API: {e}")
+        return None
 
-        :param kafka_broker: Endereço do broker Kafka.
-        :param topic: Tópico no Kafka onde os dados serão enviados.
-        :param duration: Duração (em segundos) da execução do streaming de dados.
-        """
-        self.producer = KafkaProducer(
-            bootstrap_servers=[kafka_broker], max_block_ms=5000
+
+def format_data(res):
+    """
+    Formata os dados brutos do usuário para um formato mais estruturado.
+
+    Parâmetros:
+        res (dict): Dados brutos do usuário.
+
+    Retorna:
+        dict: Dados formatados ou None em caso de erro.
+    """
+    try:
+        data = {}
+        location = res["location"]
+        # Gera um ID único para o usuário
+        data["id"] = str(uuid.uuid4())
+        # Extrai informações do nome
+        data["first_name"] = res["name"]["first"]
+        data["last_name"] = res["name"]["last"]
+        # Extrai o gênero
+        data["gender"] = res["gender"]
+        # Formata o endereço
+        data["address"] = (
+            f"{str(location['street']['number'])} {location['street']['name']}, "
+            f"{location['city']}, {location['state']}, {location['country']}"
         )
-        self.topic = topic
-        self.duration = duration
+        # Extrai o código postal
+        data["post_code"] = location["postcode"]
+        # Extrai o e-mail
+        data["email"] = res["email"]
+        # Extrai o nome de usuário
+        data["username"] = res["login"]["username"]
+        # Extrai a data de nascimento
+        data["dob"] = res["dob"]["date"]
+        # Extrai a data de registro
+        data["registered_date"] = res["registered"]["date"]
+        # Extrai o telefone
+        data["phone"] = res["phone"]
+        # Extrai a URL da foto
+        data["picture"] = res["picture"]["medium"]
+        logging.info("Dados formatados com sucesso.")
+        return data
+    except Exception as e:
+        logging.error(f"Erro ao formatar dados: {e}")
+        return None
 
-    @staticmethod
-    def fetch_user_data():
-        """
-        Busca os dados de um usuário aleatório usando a API randomuser.me.
 
-        :return: Dados do usuário no formato JSON ou None em caso de erro.
-        """
-        try:
-            # Faz a requisição GET para a API
-            response = requests.get("https://randomuser.me/api/")
-            response.raise_for_status()  # Gera um erro se a resposta for inválida
-            return response.json()["results"][0]  # Retorna o primeiro usuário
-        except requests.RequestException as e:
-            logging.error(f"Erro ao buscar dados do usuário: {e}")
-            return None
+def stream_data():
+    """
+    Realiza o streaming dos dados dos usuários para o Kafka.
 
-    @staticmethod
-    def format_user_data(raw_data):
-        """
-        Formata os dados brutos do usuário para um formato mais estruturado.
+    O streaming continuará por 1 minuto, enviando um usuário por vez.
+    """
+    import json
+    from kafka import KafkaProducer
+    import time
 
-        :param raw_data: Dados brutos do usuário.
-        :return: Dados formatados ou None caso haja erro.
-        """
-        if not raw_data:
-            return None
+    logging.info("Iniciando a função stream_data...")
 
-        location = raw_data.get("location", {})  # Pega informações de localização
-        return {
-            "id": str(uuid.uuid4()),  # Gera um ID único para o usuário
-            "first_name": raw_data.get("name", {}).get("first", ""),
-            "last_name": raw_data.get("name", {}).get("last", ""),
-            "gender": raw_data.get("gender", ""),
-            "address": f"{location.get('street', {}).get('number', '')} {location.get('street', {}).get('name', '')}, "
-            f"{location.get('city', '')}, {location.get('state', '')}, {location.get('country', '')}",
-            "post_code": location.get("postcode", ""),
-            "email": raw_data.get("email", ""),
-            "username": raw_data.get("login", {}).get("username", ""),
-            "dob": raw_data.get("dob", {}).get("date", ""),
-            "registered_date": raw_data.get("registered", {}).get("date", ""),
-            "phone": raw_data.get("phone", ""),
-            "picture": raw_data.get("picture", {}).get("medium", ""),
-        }
+    try:
+        # Configura o produtor Kafka
+        producer = KafkaProducer(
+            bootstrap_servers=["localhost:9092"],  # Endereço do Kafka Broker
+            max_block_ms=10000,  # Tempo máximo para aguardar a conexão com o broker
+            value_serializer=lambda v: json.dumps(v).encode(
+                "utf-8"
+            ),  # Serializa os dados para JSON
+        )
+        logging.info("Produtor Kafka configurado com sucesso.")
 
-    def stream_users(self):
-        """
-        Realiza o streaming dos dados dos usuários para o Kafka.
+        # Define o tempo de execução (1 minuto)
+        curr_time = time.time()
+        end_time = curr_time + 60
 
-        O streaming continuará por `self.duration` segundos, enviando um usuário por vez.
-        """
-        end_time = time.time() + self.duration  # Determina o tempo final do streaming
+        # Loop de streaming
         while time.time() < end_time:
             try:
-                # Busca os dados do usuário
-                raw_data = self.fetch_user_data()
-                # Formata os dados para um formato mais adequado
-                user_data = self.format_user_data(raw_data)
-                if user_data:
-                    # Envia os dados para o Kafka
-                    self.producer.send(
-                        self.topic, json.dumps(user_data).encode("utf-8")
-                    )
-                    logging.info(f"Dados do usuário enviados: {user_data['id']}")
+                # Obtém os dados do usuário
+                res = get_data()
+                if res:
+                    # Formata os dados
+                    formatted_data = format_data(res)
+                    if formatted_data:
+                        # Envia os dados para o Kafka
+                        producer.send("users_created", formatted_data)
+                        logging.info(f"Dados enviados para o Kafka: {formatted_data}")
             except Exception as e:
                 logging.error(f"Erro durante o streaming: {e}")
 
-
-# Criação da instância da classe UserStreamer
-user_streamer = UserStreamer()
-
-
-# Função Python que será chamada no DAG
-def stream_data():
-    """
-    Função de entrada que chama o método de streaming de usuários.
-    """
-    user_streamer.stream_users()
+        # Garante que todas as mensagens sejam enviadas antes de encerrar
+        producer.flush()
+        logging.info("Streaming concluído. Todas as mensagens foram enviadas.")
+    except Exception as e:
+        logging.error(f"Erro ao configurar o produtor Kafka: {e}")
 
 
 # Definição do DAG (Directed Acyclic Graph) do Airflow
 with DAG(
     "user_automation",  # Nome do DAG
     default_args=default_args,  # Argumentos padrão do DAG
-    schedule_interval="@daily",  # Execução diária
+    schedule="@daily",  # Execução diária
     catchup=False,  # Não executa as execuções passadas
 ) as dag:
 
